@@ -35,6 +35,14 @@ public final class ModBlocks {
 	public static final Block SEAL_FLESH = registerHidden("seal_flesh",
 			new Block(FabricBlockSettings.copyOf(Blocks.NETHER_WART_BLOCK)));
 
+	/** Большой глаз в центре печати-креста. */
+	public static final Block SEAL_EYE = registerHidden("seal_eye",
+			new Block(FabricBlockSettings.copyOf(Blocks.NETHER_WART_BLOCK)));
+
+	/** Красная плоть без глаза: лапы и кубы на концах креста. */
+	public static final Block SEAL_SKIN = registerHidden("seal_skin",
+			new Block(FabricBlockSettings.copyOf(Blocks.NETHER_WART_BLOCK)));
+
 	/** Тёмно-красные щупальца. */
 	public static final Block SEAL_TENDON = registerHidden("seal_tendon",
 			new Block(FabricBlockSettings.copyOf(Blocks.NETHER_WART_BLOCK)));

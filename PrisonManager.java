@@ -63,22 +63,27 @@ public final class PrisonManager {
 	public static final int SEAL_SECONDS = 600;
 
 	// Фаза захвата (тики от начала).
-	private static final int ARMS_SPAWN_AT = 8;
-	private static final int FLOATS_SPAWN_AT = 12;
-	private static final int FLOAT_ARMS_AT = 22;
-	private static final int READY_AT = 34;
+	private static final int UNFOLD_TIME = 14;
+	private static final int ARMS_SPAWN_AT = 14;
+	private static final int FLOATS_SPAWN_AT = 18;
+	private static final int FLOAT_ARMS_AT = 28;
+	private static final int READY_AT = 40;
 	/** Сколько ждать закрытия, прежде чем печать рассеется: 20 секунд. */
 	private static final int HOLD_TIMEOUT = 400;
 
 	// Фаза закрытия (тики от момента «close»).
-	private static final int C_FLY = 10;
-	private static final int C_IMPACT = 20;
-	private static final int C_COMPRESS = 24;
-	private static final int C_FINISH = 46;
+	private static final int C_FLY = 8;
+	private static final int C_CLUSTER = 16;
+	private static final int C_CONVERGE = 28;
+	private static final int C_CAPTURE = 34;
+	private static final int C_COMPRESS = 37;
+	private static final int C_FINISH = 58;
 
 	private static final float PANEL_THICKNESS = 0.3f;
 	private static final float FLOAT_SIZE = 0.8f;
-	private static final float FLOAT_BIG = 1.9f;
+	private static final float FLOAT_BIG = 1.6f;
+	/** Размер кубов, навалившихся на цель (как на 2-м кадре). */
+	private static final float CLUSTER_SIZE = 1.45f;
 	/** Насколько близко надо стоять к голубому кубу, чтобы сказать «open». */
 	private static final double OPEN_RANGE = 2.0;
 	private static final double LOOK_RANGE = 12.0;
@@ -87,6 +92,8 @@ public final class PrisonManager {
 	private static final Set<String> OPEN_WORDS = Set.of("open", "открыть", "откройся", "открой");
 
 	private static final String FLESH_BLOCK = "prisonrealm:seal_flesh";
+	private static final String EYE_BLOCK = "prisonrealm:seal_eye";
+	private static final String SKIN_BLOCK = "prisonrealm:seal_skin";
 	private static final String TENDON_BLOCK = "prisonrealm:seal_tendon";
 	private static final String SEALED_BLOCK = "prisonrealm:sealed_cube";
 	/** Голубое свечение вокруг готового куба. */
@@ -99,13 +106,6 @@ public final class PrisonManager {
 			new DustParticleEffect(new Vector3f(0.35f, 0.0f, 0.02f), 2.0f);
 	private static final DustParticleEffect BLUE_DUST =
 			new DustParticleEffect(new Vector3f(0.35f, 0.85f, 1.0f), 1.3f);
-
-	/** Куб-«глаз», который парит перед целью. */
-	private static final String EYE_NBT = "{item:{id:\"prisonrealm:sealing_cube\",Count:1b},"
-			+ "item_display:\"fixed\",billboard:\"center\",Tags:[\"prisonrealm_cube\"],"
-			+ "brightness:{sky:15,block:15},"
-			+ "transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],"
-			+ "translation:[0f,0f,0f],scale:[0.3f,0.3f,0.3f]}}";
 
 	private static final class Seal {
 		final ServerWorld world;
@@ -121,7 +121,10 @@ public final class PrisonManager {
 		final boolean prevNoAi;
 		Text name;
 		int age = 0;
-		UUID eyeId;
+		/** Поворот «печати»-креста: лицом к цели. */
+		Quaternionf facing = new Quaternionf();
+		/** Детали креста: 0 — глаз в центре, 1..4 — лапы, 5..8 — кубы на концах лап. */
+		final List<UUID> cross = new ArrayList<>();
 		final List<UUID> eyeArms = new ArrayList<>();
 		final List<UUID> floats = new ArrayList<>();
 		final List<UUID> floatArms = new ArrayList<>();
@@ -351,14 +354,21 @@ public final class PrisonManager {
 			flat = new Vec3d(0, 0, 1);
 		}
 		float extra = Math.max(0.0f, Math.max(target.getWidth(), target.getHeight()) / 2 - 0.9f);
-		Vec3d eyePos = eye.add(flat.normalize().multiply(3.2 + extra)).add(0, 0.6, 0);
+		Vec3d eyePos = eye.add(flat.normalize().multiply(3.6 + extra)).add(0, 0.4, 0);
 
 		Seal s = new Seal(w, owner.getUuid(), target, eyePos);
 		s.closeRequested = closeNow;
-		s.eyeId = spawnDisplay(w, EntityType.ITEM_DISPLAY, eyePos, EYE_NBT);
+		// «Печать» стоит лицом к цели: локальная ось +Z смотрит на цель.
+		Vec3d toTarget = s.center.subtract(eyePos);
+		s.facing = new Quaternionf().rotationY((float) Math.atan2(toTarget.x, toTarget.z));
+		for (int i = 0; i < 9; i++) {
+			s.cross.add(spawnDisplay(w, EntityType.BLOCK_DISPLAY, eyePos,
+					blockDisplayNbt(i == 0 ? EYE_BLOCK : SKIN_BLOCK, crossTransform(s, i, false))));
+		}
 		PENDING.put(target.getUuid(), s);
 
-		target.addStatusEffect(new StatusEffectInstance(StatusEffects.SLOWNESS, HOLD_TIMEOUT + 80, 10));
+		// Замедление без частиц и значка: никаких зелёных спиралей.
+		target.addStatusEffect(new StatusEffectInstance(StatusEffects.SLOWNESS, HOLD_TIMEOUT + 80, 10, false, false, false));
 		if (target instanceof MobEntity mob) {
 			mob.setAiDisabled(true);
 		}
@@ -475,14 +485,68 @@ public final class PrisonManager {
 
 	// ---- геометрия ----
 
-	/** Точки на теле цели, за которые хватают щупальца куба-глаза. */
+	/** Точки на теле цели, за которые хватают щупальца печати (без головы, чтобы не лезли в камеру). */
 	private static Vec3d[] grabPoints(Seal s) {
 		double h = s.halfHeight;
-		double w = Math.min(0.45, s.radius * 0.35);
+		double w = Math.min(0.4, s.radius * 0.3);
 		return new Vec3d[] {
-				new Vec3d(0, h * 0.85, 0), new Vec3d(w, h * 0.4, w * 0.4), new Vec3d(-w, h * 0.4, -w * 0.4),
-				new Vec3d(w * 0.6, -h * 0.5, -w), new Vec3d(-w * 0.6, -h * 0.5, w), new Vec3d(0, -h * 0.9, 0)
+				new Vec3d(w, h * 0.35, 0), new Vec3d(-w, h * 0.35, 0),
+				new Vec3d(w * 0.5, -h * 0.6, 0), new Vec3d(-w * 0.5, -h * 0.6, 0)
 		};
+	}
+
+	/** Откуда растут щупальца печати: из кубов на концах лап. */
+	private static Vec3d crossKnob(Seal s, int k) {
+		double a = Math.toRadians(45 + 90 * k);
+		Vector3f local = new Vector3f((float) (Math.cos(a) * 1.75), (float) (Math.sin(a) * 1.75), 0.0f);
+		s.facing.transform(local);
+		return s.eyePos.add(local.x, local.y, local.z);
+	}
+
+	/**
+	 * Деталь печати-креста (как на 3-м кадре). open=false: всё сложено в маленький куб.
+	 * 0 — пластина с глазом, 1..4 — лапы по диагоналям, 5..8 — кубы на концах лап.
+	 */
+	private static String crossTransform(Seal s, int idx, boolean open) {
+		Vector3f lt;
+		Quaternionf lr;
+		Vector3f scale;
+		if (idx == 0) {
+			float p = open ? 1.9f : 0.6f;
+			float th = open ? 0.3f : 0.6f;
+			lr = new Quaternionf();
+			scale = new Vector3f(p, p, th);
+			lt = new Vector3f(-p / 2, -p / 2, -th / 2);
+		} else if (idx <= 4) {
+			double a = Math.toRadians(45 + 90 * (idx - 1));
+			float len = open ? 1.55f : 0.02f;
+			float wid = 0.55f;
+			float dep = 0.32f;
+			lr = new Quaternionf().rotationZ((float) a);
+			scale = new Vector3f(len, wid, dep);
+			lt = new Vector3f(0, -wid / 2, -dep / 2);
+			lr.transform(lt);
+		} else {
+			double a = Math.toRadians(45 + 90 * (idx - 5));
+			float dist = open ? 1.75f : 0.0f;
+			float size = open ? 0.75f : 0.3f;
+			lr = new Quaternionf().rotationZ((float) a);
+			Vector3f half = new Vector3f(-size / 2, -size / 2, -size / 2);
+			lr.transform(half);
+			lt = new Vector3f((float) (Math.cos(a) * dist), (float) (Math.sin(a) * dist), 0).add(half);
+			scale = new Vector3f(size, size, size);
+		}
+		// Переводим из локальных координат печати в мировые (поворот лицом к цели).
+		Vector3f t = new Vector3f(lt);
+		s.facing.transform(t);
+		Quaternionf rot = new Quaternionf(s.facing).mul(lr);
+		return transformNbt(t, rot, scale);
+	}
+
+	private static void animateCross(Seal s, boolean open, int duration) {
+		for (int i = 0; i < s.cross.size(); i++) {
+			patchDisplay(s.world, s.cross.get(i), animNbt(crossTransform(s, i, open), duration));
+		}
 	}
 
 	/** Где висит i-й куб в ожидании закрытия (относительно центра цели). */
@@ -497,6 +561,26 @@ public final class PrisonManager {
 	private static Quaternionf floatRotation(int i) {
 		return new Quaternionf().rotationXYZ(
 				(float) Math.toRadians(15 + i * 11), (float) Math.toRadians(i * 37), (float) Math.toRadians(-10 + i * 7));
+	}
+
+	/** Куда i-й куб наваливается на цель: со всех сторон вплотную, вразнобой (как на 2-м кадре). */
+	private static Vec3d clusterOffset(Seal s, int i) {
+		double r = s.radius * 0.78;
+		double h = s.halfHeight;
+		return switch (i) {
+			case 0 -> new Vec3d(r, h * 0.35, 0.25);
+			case 1 -> new Vec3d(-r, -h * 0.2, -0.2);
+			case 2 -> new Vec3d(0.2, h + CLUSTER_SIZE * 0.35, -0.15);
+			case 3 -> new Vec3d(-0.25, -h * 0.75, r * 0.55);
+			case 4 -> new Vec3d(-0.3, h * 0.25, r);
+			default -> new Vec3d(0.3, -h * 0.15, -r);
+		};
+	}
+
+	/** Наклон навалившегося куба: меньше, чем в воздухе. */
+	private static Quaternionf clusterRotation(int i) {
+		return new Quaternionf().rotationXYZ(
+				(float) Math.toRadians(8 + i * 5), (float) Math.toRadians(i * 19 - 20), (float) Math.toRadians(-6 + i * 4));
 	}
 
 	/** Где на теле крепится щупальце i-го куба. */
@@ -550,31 +634,34 @@ public final class PrisonManager {
 			target.setVelocity(Vec3d.ZERO);
 		}
 
-		// Красный вихрь вокруг куба-глаза.
-		if (s.age % 2 == 0 && !s.captured) {
-			double a = s.age * 0.35;
-			w.spawnParticles(RED_DUST,
-					eye.x + Math.cos(a) * 1.6, eye.y + Math.sin(a * 0.7) * 0.8, eye.z + Math.sin(a) * 1.6,
-					2, 0.05, 0.05, 0.05, 0.0);
-			w.spawnParticles(ParticleTypes.CRIMSON_SPORE, eye.x, eye.y, eye.z, 2, 0.8, 0.8, 0.8, 0.0);
+		// Лёгкая красная дымка вокруг печати.
+		if (s.age % 4 == 0 && !s.captured && !s.cross.isEmpty()) {
+			double a = s.age * 0.3;
+			w.spawnParticles(DARK_RED_DUST,
+					eye.x + Math.cos(a) * 1.8, eye.y + Math.sin(a * 0.7) * 1.2, eye.z + Math.sin(a) * 1.8,
+					1, 0.05, 0.05, 0.05, 0.0);
 		}
 
 		// ---------- захват ----------
 		if (s.age == 1) {
-			patchDisplay(w, s.eyeId, animNbt(transformNbt(new Vector3f(), new Quaternionf(), new Vector3f(3.2f, 3.2f, 3.2f)), 18));
+			// Печать раскрывается: из маленького куба вырастает крест с глазом.
+			animateCross(s, true, UNFOLD_TIME);
+			sound(w, eye, SoundEvents.BLOCK_SCULK_SHRIEKER_SHRIEK, 1.5f, 0.6f);
 		}
 		if (s.age == ARMS_SPAWN_AT) {
-			for (Vec3d p : grabPoints(s)) {
-				s.eyeArms.add(spawnDisplay(w, EntityType.BLOCK_DISPLAY, eye,
-						blockDisplayNbt(TENDON_BLOCK, rodTransform(c.add(p).subtract(eye), 0.02f, 0.2f))));
+			Vec3d[] pts = grabPoints(s);
+			for (int k = 0; k < pts.length; k++) {
+				Vec3d from = crossKnob(s, k);
+				s.eyeArms.add(spawnDisplay(w, EntityType.BLOCK_DISPLAY, from,
+						blockDisplayNbt(TENDON_BLOCK, rodTransform(c.add(pts[k]).subtract(from), 0.02f, 0.18f))));
 			}
 			sound(w, eye, SoundEvents.ENTITY_WARDEN_EMERGE, 1.5f, 0.7f);
 		}
 		if (s.age == ARMS_SPAWN_AT + 1) {
 			Vec3d[] pts = grabPoints(s);
-			for (int i = 0; i < s.eyeArms.size(); i++) {
-				Vec3d d = c.add(pts[i]).subtract(eye);
-				patchDisplay(w, s.eyeArms.get(i), animNbt(rodTransform(d, (float) d.length(), 0.2f), 12));
+			for (int k = 0; k < s.eyeArms.size(); k++) {
+				Vec3d d = c.add(pts[k]).subtract(crossKnob(s, k));
+				patchDisplay(w, s.eyeArms.get(k), animNbt(rodTransform(d, (float) d.length(), 0.18f), 10));
 			}
 		}
 		if (s.age == FLOATS_SPAWN_AT) {
@@ -587,8 +674,6 @@ public final class PrisonManager {
 		if (s.age == FLOATS_SPAWN_AT + 1) {
 			for (int i = 0; i < s.floats.size(); i++) {
 				patchDisplay(w, s.floats.get(i), animNbt(cubeTransform(floatOffset(s, i, false), FLOAT_SIZE, floatRotation(i)), 10));
-				Vec3d o = c.add(floatOffset(s, i, false));
-				w.spawnParticles(RED_DUST, o.x, o.y, o.z, 15, 0.4, 0.4, 0.4, 0.0);
 			}
 		}
 		// Щупальца от каждого куба к цели.
@@ -597,14 +682,14 @@ public final class PrisonManager {
 				Vec3d from = floatAttach(s, i);
 				Vec3d to = c.add(floatOffset(s, i, false));
 				s.floatArms.add(spawnDisplay(w, EntityType.BLOCK_DISPLAY, from,
-						blockDisplayNbt(TENDON_BLOCK, rodTransform(to.subtract(from), 0.02f, 0.16f))));
+						blockDisplayNbt(TENDON_BLOCK, rodTransform(to.subtract(from), 0.02f, 0.14f))));
 			}
 			sound(w, c, SoundEvents.ENTITY_WARDEN_TENDRIL_CLICKS, 2.0f, 0.6f);
 		}
 		if (s.age == FLOAT_ARMS_AT + 1) {
 			for (int i = 0; i < s.floatArms.size(); i++) {
 				Vec3d d = c.add(floatOffset(s, i, false)).subtract(floatAttach(s, i));
-				patchDisplay(w, s.floatArms.get(i), animNbt(rodTransform(d, (float) d.length(), 0.16f), 10));
+				patchDisplay(w, s.floatArms.get(i), animNbt(rodTransform(d, (float) d.length(), 0.14f), 10));
 			}
 		}
 
@@ -616,10 +701,8 @@ public final class PrisonManager {
 				patchDisplay(w, s.floats.get(i), animNbt(cubeTransform(o, FLOAT_SIZE, floatRotation(i)), 20));
 				if (i < s.floatArms.size()) {
 					Vec3d d = c.add(o).subtract(floatAttach(s, i));
-					patchDisplay(w, s.floatArms.get(i), animNbt(rodTransform(d, (float) d.length(), 0.16f), 20));
+					patchDisplay(w, s.floatArms.get(i), animNbt(rodTransform(d, (float) d.length(), 0.14f), 20));
 				}
-				Vec3d p = c.add(o);
-				w.spawnParticles(DARK_RED_DUST, p.x, p.y, p.z, 3, 0.3, 0.3, 0.3, 0.0);
 			}
 		}
 		if (s.age == READY_AT && !s.closeRequested) {
@@ -639,37 +722,53 @@ public final class PrisonManager {
 		// ---------- закрытие ----------
 		int t = s.age - s.closeAt;
 		if (t == 0) {
-			// Кубы в воздухе становятся большими...
+			// Кубы в воздухе становятся большими, печать складывается обратно.
 			for (int i = 0; i < s.floats.size(); i++) {
 				patchDisplay(w, s.floats.get(i), animNbt(cubeTransform(floatOffset(s, i, false), FLOAT_BIG, floatRotation(i)), 8));
 			}
+			animateCross(s, false, 12);
 			sound(w, c, SoundEvents.ENTITY_WARDEN_ROAR, 2.0f, 0.7f);
 		}
 		if (t == C_FLY) {
-			// ...и летят на цель, превращаясь в грани. Щупальца втягиваются.
-			animatePanels(s, s.radius, C_IMPACT - C_FLY);
+			// Кубы летят на цель и наваливаются со всех сторон. Щупальца втягиваются.
+			for (int i = 0; i < s.floats.size(); i++) {
+				patchDisplay(w, s.floats.get(i), animNbt(cubeTransform(clusterOffset(s, i), CLUSTER_SIZE, clusterRotation(i)), C_CLUSTER - C_FLY));
+			}
 			for (int i = 0; i < s.floatArms.size(); i++) {
 				Vec3d d = c.add(floatOffset(s, i, false)).subtract(floatAttach(s, i));
-				patchDisplay(w, s.floatArms.get(i), animNbt(rodTransform(d, 0.02f, 0.16f), C_IMPACT - C_FLY));
+				patchDisplay(w, s.floatArms.get(i), animNbt(rodTransform(d, 0.02f, 0.14f), C_CLUSTER - C_FLY));
 			}
 			Vec3d[] pts = grabPoints(s);
-			for (int i = 0; i < s.eyeArms.size(); i++) {
-				patchDisplay(w, s.eyeArms.get(i), animNbt(rodTransform(c.add(pts[i]).subtract(eye), 0.02f, 0.2f), 8));
+			for (int k = 0; k < s.eyeArms.size(); k++) {
+				patchDisplay(w, s.eyeArms.get(k), animNbt(rodTransform(c.add(pts[k]).subtract(crossKnob(s, k)), 0.02f, 0.18f), 8));
 			}
 			sound(w, c, SoundEvents.ENTITY_ENDER_DRAGON_FLAP, 2.0f, 0.6f);
 		}
-		if (t > C_FLY && t < C_IMPACT) {
-			w.spawnParticles(RED_DUST, c.x, c.y, c.z, 10, s.radius * 1.4, s.radius * 1.4, s.radius * 1.4, 0.0);
+		if (t > C_FLY && t < C_CLUSTER) {
+			w.spawnParticles(RED_DUST, c.x, c.y, c.z, 6, s.radius * 1.4, s.radius * 1.4, s.radius * 1.4, 0.0);
 		}
-		if (t == C_IMPACT) {
-			// Куб сомкнулся: цель исчезает внутри.
+		if (t == C_CLUSTER) {
+			// Глухой удар: кубы навалились на цель.
 			discardAll(w, s.eyeArms);
 			discardAll(w, s.floatArms);
-			discard(w, s.eyeId);
-			s.eyeId = null;
+			discardAll(w, s.cross);
+			w.spawnParticles(RED_DUST, c.x, c.y, c.z, 40, s.radius, s.radius, s.radius, 0.0);
+			sound(w, c, SoundEvents.ENTITY_IRON_GOLEM_DAMAGE, 2.0f, 0.5f);
+			sound(w, c, SoundEvents.BLOCK_MUD_BREAK, 2.0f, 0.5f);
+		}
+		if (t == C_CLUSTER + 6) {
+			sound(w, c, SoundEvents.ENTITY_WARDEN_HEARTBEAT, 2.0f, 0.7f);
+		}
+		if (t == C_CONVERGE) {
+			// Кубы сдвигаются вплотную и превращаются в один сомкнутый куб.
+			animatePanels(s, s.radius, C_CAPTURE - C_CONVERGE);
+			sound(w, c, SoundEvents.BLOCK_PISTON_CONTRACT, 2.0f, 0.5f);
+		}
+		if (t == C_CAPTURE) {
+			// Куб сомкнулся: цель исчезает внутри.
 			capture(target, s);
-			w.spawnParticles(ParticleTypes.EXPLOSION, c.x, c.y, c.z, 4, 0.8, 0.8, 0.8, 0.0);
-			w.spawnParticles(RED_DUST, c.x, c.y, c.z, 60, s.radius + 0.3, s.radius + 0.3, s.radius + 0.3, 0.0);
+			w.spawnParticles(ParticleTypes.EXPLOSION, c.x, c.y, c.z, 3, 0.8, 0.8, 0.8, 0.0);
+			w.spawnParticles(RED_DUST, c.x, c.y, c.z, 50, s.radius + 0.3, s.radius + 0.3, s.radius + 0.3, 0.0);
 			sound(w, c, SoundEvents.BLOCK_ANVIL_LAND, 2.0f, 0.5f);
 		}
 		if (t == C_COMPRESS) {
@@ -677,7 +776,7 @@ public final class PrisonManager {
 		}
 		if (t > C_COMPRESS && t % 6 == 0) {
 			sound(w, c, SoundEvents.ENTITY_WARDEN_HEARTBEAT, 2.0f, 0.8f);
-			w.spawnParticles(DARK_RED_DUST, c.x, c.y, c.z, 10, 0.7, 0.7, 0.7, 0.0);
+			w.spawnParticles(DARK_RED_DUST, c.x, c.y, c.z, 8, 0.7, 0.7, 0.7, 0.0);
 		}
 	}
 
@@ -721,7 +820,7 @@ public final class PrisonManager {
 
 	/** Убирает всю анимацию и отпускает цель (если она ещё не внутри). */
 	private static void abortSeal(LivingEntity target, Seal s) {
-		discard(s.world, s.eyeId);
+		discardAll(s.world, s.cross);
 		discardAll(s.world, s.eyeArms);
 		discardAll(s.world, s.floatArms);
 		discardAll(s.world, s.floats);
