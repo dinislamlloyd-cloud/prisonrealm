@@ -65,9 +65,13 @@ public final class PrisonManager {
 	// Фаза захвата (тики от начала).
 	private static final int UNFOLD_TIME = 14;
 	private static final int ARMS_SPAWN_AT = 14;
-	private static final int FLOATS_SPAWN_AT = 18;
-	private static final int FLOAT_ARMS_AT = 28;
-	private static final int READY_AT = 40;
+	/** Через 3 секунды печать-крест складывается и исчезает... */
+	private static final int CROSS_FOLD_AT = 60;
+	private static final int CROSS_GONE_AT = 68;
+	/** ...и только потом появляются кубы. */
+	private static final int FLOATS_SPAWN_AT = 68;
+	private static final int FLOAT_ARMS_AT = 78;
+	private static final int READY_AT = 90;
 	/** Сколько ждать закрытия, прежде чем печать рассеется: 20 секунд. */
 	private static final int HOLD_TIMEOUT = 400;
 
@@ -663,6 +667,22 @@ public final class PrisonManager {
 				Vec3d d = c.add(pts[k]).subtract(crossKnob(s, k));
 				patchDisplay(w, s.eyeArms.get(k), animNbt(rodTransform(d, (float) d.length(), 0.18f), 10));
 			}
+		}
+		if (s.age == CROSS_FOLD_AT) {
+			// Печать складывается, её щупальца втягиваются.
+			animateCross(s, false, CROSS_GONE_AT - CROSS_FOLD_AT);
+			Vec3d[] pts = grabPoints(s);
+			for (int k = 0; k < s.eyeArms.size(); k++) {
+				patchDisplay(w, s.eyeArms.get(k),
+						animNbt(rodTransform(c.add(pts[k]).subtract(crossKnob(s, k)), 0.02f, 0.18f), CROSS_GONE_AT - CROSS_FOLD_AT));
+			}
+			sound(w, eye, SoundEvents.ENTITY_WARDEN_DIG, 1.5f, 0.8f);
+		}
+		if (s.age == CROSS_GONE_AT) {
+			discardAll(w, s.eyeArms);
+			discardAll(w, s.cross);
+			w.spawnParticles(RED_DUST, eye.x, eye.y, eye.z, 25, 0.4, 0.4, 0.4, 0.0);
+			w.spawnParticles(ParticleTypes.POOF, eye.x, eye.y, eye.z, 8, 0.3, 0.3, 0.3, 0.02);
 		}
 		if (s.age == FLOATS_SPAWN_AT) {
 			for (int i = 0; i < 6; i++) {

@@ -52,6 +52,8 @@ public class PrisonRealmMod implements ModInitializer {
 		PrisonCommands.register();
 
 		ServerTickEvents.END_SERVER_TICK.register(PrisonManager::tick);
+		// Крафт куба на земле: 3 обсидиана + 3 красных красителя рядом.
+		ServerTickEvents.END_SERVER_TICK.register(GroundCrafting::tick);
 
 		// Слова «close» и «open» в чате управляют кубом.
 		ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) ->

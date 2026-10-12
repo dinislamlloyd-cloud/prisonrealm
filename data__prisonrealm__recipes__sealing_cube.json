@@ -1,22 +1,14 @@
 {
-  "type": "minecraft:crafting_shaped",
+  "type": "minecraft:crafting_shapeless",
   "category": "misc",
-  "pattern": [
-    "OEO",
-    "ENE",
-    "OEO"
+  "ingredients": [
+    { "item": "minecraft:obsidian" },
+    { "item": "minecraft:obsidian" },
+    { "item": "minecraft:obsidian" },
+    { "item": "minecraft:red_dye" },
+    { "item": "minecraft:red_dye" },
+    { "item": "minecraft:red_dye" }
   ],
-  "key": {
-    "O": {
-      "item": "minecraft:obsidian"
-    },
-    "E": {
-      "item": "minecraft:ender_eye"
-    },
-    "N": {
-      "item": "minecraft:nether_star"
-    }
-  },
   "result": {
     "item": "prisonrealm:sealing_cube",
     "count": 1
