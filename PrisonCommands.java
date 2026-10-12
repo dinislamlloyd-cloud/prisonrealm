@@ -32,6 +32,10 @@ public final class PrisonCommands {
 										.executes(ctx -> arrest(ctx, 5))
 										.then(CommandManager.argument("minutes", IntegerArgumentType.integer(1, 1440))
 												.executes(ctx -> arrest(ctx, IntegerArgumentType.getInteger(ctx, "minutes"))))))
+						.then(CommandManager.literal("seal")
+								.requires(s -> s.hasPermissionLevel(2))
+								.then(CommandManager.argument("player", EntityArgumentType.player())
+										.executes(PrisonCommands::seal)))
 						.then(CommandManager.literal("release")
 								.requires(s -> s.hasPermissionLevel(2))
 								.then(CommandManager.argument("player", EntityArgumentType.player())
@@ -50,6 +54,19 @@ public final class PrisonCommands {
 			return 1;
 		}
 		ctx.getSource().sendError(Text.translatable("prisonrealm.cmd.cannot_arrest", target.getDisplayName()));
+		return 0;
+	}
+
+	/** Запускает анимацию запечатывания кубом без предмета (удобно для проверки в одиночку). */
+	private static int seal(CommandContext<ServerCommandSource> ctx) throws CommandSyntaxException {
+		ServerPlayerEntity target = EntityArgumentType.getPlayer(ctx, "player");
+		ServerPlayerEntity source = ctx.getSource().getPlayer();
+		ServerPlayerEntity owner = source != null ? source : target;
+		if (PrisonManager.beginSeal(target, owner)) {
+			ctx.getSource().sendFeedback(() -> Text.translatable("prisonrealm.sealing", target.getDisplayName()), true);
+			return 1;
+		}
+		ctx.getSource().sendError(Text.translatable("prisonrealm.cannot_seal"));
 		return 0;
 	}
 

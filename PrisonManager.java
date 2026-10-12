@@ -88,7 +88,8 @@ public final class PrisonManager {
 
 		// Куб парит перед целью, на линии «цель -> владелец куба».
 		Vec3d eye = target.getEyePos();
-		Vec3d toOwner = owner.getEyePos().subtract(eye);
+		// Если куб запускают на себя (команда /prison seal), он появляется там, куда смотрит цель.
+		Vec3d toOwner = owner == target ? target.getRotationVec(1.0f) : owner.getEyePos().subtract(eye);
 		Vec3d flat = new Vec3d(toOwner.x, 0, toOwner.z);
 		if (flat.lengthSquared() < 1.0E-4) {
 			flat = new Vec3d(0, 0, 1);
