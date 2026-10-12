@@ -10,8 +10,6 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.StringNbtReader;
-import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket;
-import net.minecraft.particle.DustParticleEffect;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
@@ -19,18 +17,21 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvent;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -40,23 +41,52 @@ public final class PrisonManager {
 	public static final int DEFAULT_SECONDS = 300;
 	/** Срок по запечатывающему кубу. */
 	public static final int SEAL_SECONDS = 600;
-	/** Длительность «запечатывания»: 4 секунды. */
-	public static final int SEAL_WINDUP_TICKS = 80;
+	/** Длительность «запечатывания»: 4,8 секунды. */
+	public static final int SEAL_WINDUP_TICKS = 96;
 
-	private static final DustParticleEffect TENTACLE_DUST =
-			new DustParticleEffect(new Vector3f(0.30f, 0.05f, 0.40f), 1.6f);
+	// Расписание анимации запечатывания (в тиках от начала).
+	private static final int ARMS_SPAWN_AT = 10;
+	private static final int PANELS_SPAWN_AT = 36;
+	private static final int PANELS_CLOSED_AT = 61;
+	private static final int ARMS_RETRACT_AT = 56;
+	private static final int ARMS_REMOVE_AT = 64;
+	private static final int COMPRESS_AT = 64;
 
-	/** Начальное состояние куба: маленький, дальше он «раскрывается» анимацией. */
+	private static final float PANEL_THICKNESS = 0.25f;
+	private static final float PANEL_SIZE = 2.6f;
+
+	/** Куб-«глаз», который парит перед целью и командует щупальцами. */
 	private static final String CUBE_NBT = "{item:{id:\"prisonrealm:sealing_cube\",Count:1b},"
 			+ "item_display:\"fixed\",billboard:\"center\",Tags:[\"prisonrealm_cube\"],"
 			+ "brightness:{sky:15,block:15},"
 			+ "transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],"
 			+ "translation:[0f,0f,0f],scale:[0.3f,0.3f,0.3f]}}";
 
+	/** Готовый «запечатанный» куб, который остаётся на месте ареста. */
+	private static final String SEALED_CUBE_NBT = "{block_state:{Name:\"minecraft:crying_obsidian\"},"
+			+ "brightness:{sky:15,block:15},Tags:[\"prisonrealm_cube\"],"
+			+ "transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],"
+			+ "translation:[-0.65f,-0.65f,-0.65f],scale:[1.3f,1.3f,1.3f]}}";
+
+	private static final class Arm {
+		UUID id;
+		Quaternionf rotation;
+		Vector3f translation;
+		float length;
+	}
+
 	private static final class Seal {
+		final ServerWorld world;
 		int age = 0;
 		UUID cubeId;
 		Vec3d cubePos;
+		Vec3d center;
+		final List<Arm> arms = new ArrayList<>();
+		final List<UUID> panels = new ArrayList<>();
+
+		Seal(ServerWorld world) {
+			this.world = world;
+		}
 	}
 
 	/** Игроки, которых сейчас запечатывает куб. */
@@ -79,7 +109,7 @@ public final class PrisonManager {
 
 	// ------------------------------------------------------ запечатывание
 
-	/** Начинает «запечатывание»: появляется куб, тянет щупальца и затягивает цель. */
+	/** Начинает «запечатывание»: куб, руки, смыкающиеся грани и сжатие. */
 	public static boolean beginSeal(ServerPlayerEntity target, ServerPlayerEntity owner) {
 		if (PENDING.containsKey(target.getUuid()) || isPrisoner(target)) {
 			return false;
@@ -96,72 +126,164 @@ public final class PrisonManager {
 		}
 		Vec3d cubePos = eye.add(flat.normalize().multiply(3.0)).add(0, 0.5, 0);
 
-		Seal seal = new Seal();
+		Seal seal = new Seal(w);
 		seal.cubePos = cubePos;
-		seal.cubeId = spawnCube(w, cubePos);
+		seal.cubeId = spawnDisplay(w, EntityType.ITEM_DISPLAY, cubePos, CUBE_NBT);
 		PENDING.put(target.getUuid(), seal);
 
 		target.addStatusEffect(new StatusEffectInstance(StatusEffects.SLOWNESS, SEAL_WINDUP_TICKS + 10, 10));
-		w.playSound(null, BlockPos.ofFloored(cubePos), SoundEvents.ENTITY_ELDER_GUARDIAN_CURSE,
-				SoundCategory.HOSTILE, 1.5f, 0.5f);
+		sound(w, cubePos, SoundEvents.ENTITY_ELDER_GUARDIAN_CURSE, 1.5f, 0.5f);
 		target.sendMessage(Text.translatable("prisonrealm.being_sealed"), true);
 		return true;
 	}
 
-	private static UUID spawnCube(ServerWorld w, Vec3d pos) {
+	// ---- вспомогательное: дисплей-сущности ----
+
+	private static UUID spawnDisplay(ServerWorld w, EntityType<?> type, Vec3d pos, String snbt) {
 		try {
-			Entity cube = EntityType.ITEM_DISPLAY.create(w);
-			if (cube == null) {
+			Entity e = type.create(w);
+			if (e == null) {
 				return null;
 			}
-			cube.readNbt(StringNbtReader.parse(CUBE_NBT));
-			cube.refreshPositionAndAngles(pos.x, pos.y, pos.z, 0.0f, 0.0f);
-			w.spawnEntity(cube);
-			return cube.getUuid();
+			e.readNbt(StringNbtReader.parse(snbt));
+			e.refreshPositionAndAngles(pos.x, pos.y, pos.z, 0.0f, 0.0f);
+			w.spawnEntity(e);
+			return e.getUuid();
 		} catch (CommandSyntaxException ex) {
-			PrisonRealmMod.LOGGER.warn("Could not create sealing cube display: {}", ex.getMessage());
+			PrisonRealmMod.LOGGER.warn("Could not create display entity: {}", ex.getMessage());
 			return null;
 		}
 	}
 
-	/** Меняет часть данных уже существующего куба (например, размер с анимацией). */
-	private static void patchCube(ServerWorld w, UUID id, String snbt) {
+	/** Меняет часть данных уже существующей дисплей-сущности (например, размер с анимацией). */
+	private static void patchDisplay(ServerWorld w, UUID id, String snbt) {
 		if (id == null) {
 			return;
 		}
-		Entity cube = w.getEntity(id);
-		if (cube == null) {
+		Entity e = w.getEntity(id);
+		if (e == null) {
 			return;
 		}
 		try {
 			NbtCompound patch = StringNbtReader.parse(snbt);
-			NbtCompound merged = cube.writeNbt(new NbtCompound());
+			NbtCompound merged = e.writeNbt(new NbtCompound());
 			for (String key : patch.getKeys()) {
 				merged.put(key, patch.get(key).copy());
 			}
-			cube.readNbt(merged);
+			e.readNbt(merged);
 		} catch (CommandSyntaxException ex) {
-			PrisonRealmMod.LOGGER.warn("Could not update sealing cube display: {}", ex.getMessage());
+			PrisonRealmMod.LOGGER.warn("Could not update display entity: {}", ex.getMessage());
 		}
 	}
 
-	private static String scaleNbt(float scale, int duration) {
-		return "{transformation:{left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f],"
-				+ "translation:[0f,0f,0f],scale:[" + scale + "f," + scale + "f," + scale + "f]},"
-				+ "start_interpolation:0,interpolation_duration:" + duration + "}";
+	private static void discard(ServerWorld w, UUID id) {
+		if (id == null) {
+			return;
+		}
+		Entity e = w.getEntity(id);
+		if (e != null) {
+			e.discard();
+		}
 	}
 
-	/** Один тик анимации: куб раскрывается, щупальца хватают цель, цель затягивается. */
+	private static String f(float v) {
+		return String.format(Locale.ROOT, "%.4ff", v);
+	}
+
+	private static String transformNbt(Vector3f translation, Quaternionf rotation, Vector3f scale) {
+		return "transformation:{left_rotation:[" + f(rotation.x) + "," + f(rotation.y) + "," + f(rotation.z) + ","
+				+ f(rotation.w) + "],right_rotation:[0f,0f,0f,1f],translation:[" + f(translation.x) + ","
+				+ f(translation.y) + "," + f(translation.z) + "],scale:[" + f(scale.x) + "," + f(scale.y) + ","
+				+ f(scale.z) + "]}";
+	}
+
+	private static String animNbt(String transform, int duration) {
+		return "{" + transform + ",start_interpolation:0,interpolation_duration:" + duration + "}";
+	}
+
+	private static void sound(ServerWorld w, Vec3d pos, SoundEvent event, float volume, float pitch) {
+		w.playSound(null, BlockPos.ofFloored(pos), event, SoundCategory.HOSTILE, volume, pitch);
+	}
+
+	private static String blockDisplayNbt(String transform) {
+		return "{block_state:{Name:\"minecraft:crying_obsidian\"},brightness:{sky:15,block:15},"
+				+ "Tags:[\"prisonrealm_cube\"]," + transform + "}";
+	}
+
+	// ---- руки ----
+
+	private static final Vec3d[] ARM_TARGETS = {
+			new Vec3d(0.0, 0.8, 0.0), new Vec3d(0.45, 0.4, 0.2), new Vec3d(-0.45, 0.4, -0.2),
+			new Vec3d(0.3, -0.4, -0.4), new Vec3d(-0.3, -0.4, 0.4), new Vec3d(0.0, -0.8, 0.0)
+	};
+
+	private static String armTransform(Arm arm, float length) {
+		return transformNbt(arm.translation, arm.rotation, new Vector3f(0.16f, 0.16f, length));
+	}
+
+	private static void spawnArms(Seal s, Vec3d body) {
+		for (Vec3d off : ARM_TARGETS) {
+			Vec3d dir = body.add(off).subtract(s.cubePos);
+			double len = dir.length();
+			if (len < 0.5) {
+				continue;
+			}
+			Vector3f d = new Vector3f((float) (dir.x / len), (float) (dir.y / len), (float) (dir.z / len));
+			Arm arm = new Arm();
+			arm.length = (float) len;
+			arm.rotation = new Quaternionf().rotationTo(new Vector3f(0, 0, 1), d);
+			// Нижний край сечения руки должен лежать на оси: сдвигаем на -R * (полширины, полширины, 0).
+			Vector3f t = new Vector3f(0.08f, 0.08f, 0.0f);
+			arm.rotation.transform(t);
+			t.negate();
+			arm.translation = t;
+			arm.id = spawnDisplay(s.world, EntityType.BLOCK_DISPLAY, s.cubePos,
+					blockDisplayNbt(armTransform(arm, 0.02f)));
+			s.arms.add(arm);
+		}
+	}
+
+	// ---- грани ----
+
+	/** Грань куба: face 0..5 = +X, -X, +Y, -Y, +Z, -Z. */
+	private static String panelTransform(int face, float distance, float size) {
+		int axis = face / 2;
+		float sign = face % 2 == 0 ? 1.0f : -1.0f;
+		// Разный размер по осям, чтобы грани в углах не мерцали (z-fighting).
+		float s = size * (1.0f + 0.04f * axis);
+		Vector3f scale = new Vector3f(s, s, s);
+		Vector3f center = new Vector3f(0, 0, 0);
+		if (axis == 0) {
+			scale.x = PANEL_THICKNESS;
+			center.x = sign * distance;
+		} else if (axis == 1) {
+			scale.y = PANEL_THICKNESS;
+			center.y = sign * distance;
+		} else {
+			scale.z = PANEL_THICKNESS;
+			center.z = sign * distance;
+		}
+		Vector3f translation = new Vector3f(center.x - scale.x / 2, center.y - scale.y / 2, center.z - scale.z / 2);
+		return transformNbt(translation, new Quaternionf(), scale);
+	}
+
+	private static void animatePanels(Seal s, float distance, float size, int duration) {
+		for (int face = 0; face < s.panels.size(); face++) {
+			patchDisplay(s.world, s.panels.get(face), animNbt(panelTransform(face, distance, size), duration));
+		}
+	}
+
+	// ---- сама анимация ----
+
 	private static void stepSeal(ServerPlayerEntity p, Seal s) {
-		ServerWorld w = p.getServerWorld();
+		ServerWorld w = s.world;
 		Vec3d cube = s.cubePos;
-		Vec3d body = p.getPos().add(0, p.getHeight() * 0.6, 0);
+		Vec3d body = p.getPos().add(0, 0.9, 0);
 
+		// 1. Куб раскрывается и «смотрит» на цель.
 		if (s.age == 1) {
-			patchCube(w, s.cubeId, scaleNbt(3.0f, 30));
+			patchDisplay(w, s.cubeId, animNbt(transformNbt(new Vector3f(), new Quaternionf(), new Vector3f(3.0f, 3.0f, 3.0f)), 24));
 		}
-
-		// Тёмный вихрь вокруг куба.
 		if (s.age % 2 == 0) {
 			double a = s.age * 0.35;
 			w.spawnParticles(ParticleTypes.SQUID_INK,
@@ -170,72 +292,82 @@ public final class PrisonManager {
 			w.spawnParticles(ParticleTypes.SOUL, cube.x, cube.y, cube.z, 1, 0.8, 0.8, 0.8, 0.02);
 		}
 
-		// Щупальца: из куба к телу цели, извиваясь.
-		if (s.age >= 20 && s.age % 2 == 0) {
-			Vec3d dir = body.subtract(cube);
-			if (dir.length() > 0.1) {
-				Vec3d d = dir.normalize();
-				Vec3d side = d.crossProduct(new Vec3d(0, 1, 0));
-				if (side.lengthSquared() < 1.0E-4) {
-					side = new Vec3d(1, 0, 0);
-				}
-				side = side.normalize();
-				Vec3d up = side.crossProduct(d).normalize();
-				double grow = Math.min(1.0, (s.age - 20) / 15.0);
-
-				for (int k = 0; k < 6; k++) {
-					double phase = k * 1.05 + s.age * 0.35;
-					for (int i = 0; i <= 15; i++) {
-						double t = i / 15.0;
-						if (t > grow) {
-							break;
-						}
-						double env = Math.sin(t * Math.PI) * 0.4;
-						Vec3d pos = cube.add(dir.multiply(t))
-								.add(side.multiply(Math.sin(t * 9 + phase) * env))
-								.add(up.multiply(Math.cos(t * 9 + phase) * env));
-						w.spawnParticles(TENTACLE_DUST, pos.x, pos.y, pos.z, 1, 0, 0, 0, 0);
-					}
-				}
+		// 2. Из куба вытягиваются руки и хватают цель (игрока никуда не тянет).
+		if (s.age == ARMS_SPAWN_AT) {
+			spawnArms(s, body);
+			sound(w, cube, SoundEvents.ENTITY_WARDEN_EMERGE, 1.5f, 0.7f);
+		}
+		if (s.age == ARMS_SPAWN_AT + 1) {
+			for (Arm arm : s.arms) {
+				patchDisplay(w, arm.id, animNbt(armTransform(arm, arm.length), 16));
 			}
 		}
 
-		// Затягивание цели в куб.
-		if (s.age >= 40 && s.age % 2 == 0) {
-			Vec3d pull = cube.subtract(body);
-			if (pull.length() > 1.5) {
-				p.setVelocity(pull.normalize().multiply(0.25));
-				p.velocityModified = true;
-				p.networkHandler.sendPacket(new EntityVelocityUpdateS2CPacket(p));
+		// 3. Шесть граней летят к игроку со всех сторон.
+		if (s.age == PANELS_SPAWN_AT) {
+			s.center = p.getPos().add(0, 0.9, 0);
+			for (int face = 0; face < 6; face++) {
+				s.panels.add(spawnDisplay(w, EntityType.BLOCK_DISPLAY, s.center,
+						blockDisplayNbt(panelTransform(face, 3.6f, PANEL_SIZE))));
 			}
+			sound(w, s.center, SoundEvents.BLOCK_BEACON_DEACTIVATE, 2.0f, 0.5f);
+		}
+		if (s.age == PANELS_SPAWN_AT + 1) {
+			animatePanels(s, 1.25f, PANEL_SIZE, PANELS_CLOSED_AT - PANELS_SPAWN_AT - 1);
+		}
+
+		// Руки убираются, когда грани почти сомкнулись.
+		if (s.age == ARMS_RETRACT_AT) {
+			for (Arm arm : s.arms) {
+				patchDisplay(w, arm.id, animNbt(armTransform(arm, 0.02f), 6));
+			}
+		}
+		if (s.age == ARMS_REMOVE_AT) {
+			for (Arm arm : s.arms) {
+				discard(w, arm.id);
+			}
+			s.arms.clear();
+		}
+
+		// 4. Куб сомкнулся: удар, затем сжатие вокруг игрока.
+		if (s.age == PANELS_CLOSED_AT && s.center != null) {
+			w.spawnParticles(ParticleTypes.EXPLOSION, s.center.x, s.center.y, s.center.z, 4, 0.8, 0.8, 0.8, 0.0);
+			sound(w, s.center, SoundEvents.BLOCK_ANVIL_LAND, 2.0f, 0.5f);
+		}
+		if (s.age == COMPRESS_AT) {
+			animatePanels(s, 0.62f, 1.5f, SEAL_WINDUP_TICKS - COMPRESS_AT - 4);
+		}
+		if (s.age > COMPRESS_AT && s.age % 8 == 0 && s.center != null) {
+			sound(w, s.center, SoundEvents.ENTITY_WARDEN_HEARTBEAT, 2.0f, 0.8f);
+			w.spawnParticles(ParticleTypes.SQUID_INK, s.center.x, s.center.y, s.center.z, 8, 0.5, 0.5, 0.5, 0.02);
+		}
+	}
+
+	private static void abortSeal(Seal s) {
+		discard(s.world, s.cubeId);
+		for (Arm arm : s.arms) {
+			discard(s.world, arm.id);
+		}
+		for (UUID id : s.panels) {
+			discard(s.world, id);
 		}
 	}
 
 	private static void finishSeal(ServerPlayerEntity p, Seal s) {
-		ServerWorld w = p.getServerWorld();
-		Vec3d cube = s.cubePos;
-		Vec3d body = p.getPos().add(0, p.getHeight() * 0.6, 0);
+		ServerWorld w = s.world;
+		Vec3d center = s.center != null ? s.center : p.getPos().add(0, 0.9, 0);
 
-		w.spawnParticles(ParticleTypes.FLASH, cube.x, cube.y, cube.z, 1, 0, 0, 0, 0);
-		w.spawnParticles(ParticleTypes.SOUL_FIRE_FLAME, body.x, body.y, body.z, 40, 0.4, 0.6, 0.4, 0.1);
-		w.playSound(null, BlockPos.ofFloored(cube), SoundEvents.ENTITY_WARDEN_SONIC_BOOM,
-				SoundCategory.HOSTILE, 2.0f, 0.6f);
-		// Куб «схлопывается» и остаётся висеть на месте ареста, пока длится срок.
-		patchCube(w, s.cubeId, scaleNbt(1.8f, 10));
+		w.spawnParticles(ParticleTypes.FLASH, center.x, center.y, center.z, 1, 0, 0, 0, 0);
+		w.spawnParticles(ParticleTypes.SOUL_FIRE_FLAME, center.x, center.y, center.z, 40, 0.4, 0.6, 0.4, 0.1);
+		sound(w, center, SoundEvents.ENTITY_WARDEN_SONIC_BOOM, 2.0f, 0.6f);
+
+		// Всё лишнее убираем, на месте остаётся один готовый куб.
+		abortSeal(s);
+		UUID sealed = spawnDisplay(w, EntityType.BLOCK_DISPLAY, center, SEALED_CUBE_NBT);
 
 		p.server.getPlayerManager().broadcast(Text.translatable("prisonrealm.sealed", p.getDisplayName()), false);
-		if (!arrest(p, SEAL_SECONDS, s.cubeId)) {
-			discardCube(w, s.cubeId);
-		}
-	}
-
-	private static void discardCube(ServerWorld w, UUID id) {
-		if (id == null) {
-			return;
-		}
-		Entity cube = w.getEntity(id);
-		if (cube != null) {
-			cube.discard();
+		if (!arrest(p, SEAL_SECONDS, sealed)) {
+			discard(w, sealed);
 		}
 	}
 
@@ -292,7 +424,10 @@ public final class PrisonManager {
 		if (e == null) {
 			return;
 		}
-		PENDING.remove(p.getUuid());
+		Seal pending = PENDING.remove(p.getUuid());
+		if (pending != null) {
+			abortSeal(pending);
+		}
 
 		RegistryKey<World> key = RegistryKey.of(RegistryKeys.WORLD, e.dimension);
 		ServerWorld target = server.getWorld(key);
@@ -335,10 +470,10 @@ public final class PrisonManager {
 		if (escaped) {
 			w.spawnParticles(ParticleTypes.EXPLOSION, pos.x, pos.y, pos.z, 3, 0.8, 0.8, 0.8, 0.0);
 			w.spawnParticles(ParticleTypes.SOUL, pos.x, pos.y, pos.z, 40, 0.8, 0.8, 0.8, 0.1);
-			w.playSound(null, BlockPos.ofFloored(pos), SoundEvents.BLOCK_GLASS_BREAK, SoundCategory.HOSTILE, 2.0f, 0.6f);
+			sound(w, pos, SoundEvents.BLOCK_GLASS_BREAK, 2.0f, 0.6f);
 		} else {
 			w.spawnParticles(ParticleTypes.POOF, pos.x, pos.y, pos.z, 20, 0.6, 0.6, 0.6, 0.02);
-			w.playSound(null, BlockPos.ofFloored(pos), SoundEvents.BLOCK_AMETHYST_CLUSTER_BREAK, SoundCategory.HOSTILE, 1.5f, 0.6f);
+			sound(w, pos, SoundEvents.BLOCK_AMETHYST_CLUSTER_BREAK, 1.5f, 0.6f);
 		}
 		cube.discard();
 	}
@@ -404,11 +539,9 @@ public final class PrisonManager {
 			Map.Entry<UUID, Seal> entry = it.next();
 			Seal seal = entry.getValue();
 			ServerPlayerEntity p = server.getPlayerManager().getPlayer(entry.getKey());
-			if (p == null) {
-				// Игрок вышел из игры во время запечатывания: куб убираем.
-				for (ServerWorld world : server.getWorlds()) {
-					discardCube(world, seal.cubeId);
-				}
+			if (p == null || p.isDead()) {
+				// Игрок вышел из игры или погиб во время запечатывания: убираем всю анимацию.
+				abortSeal(seal);
 				it.remove();
 				continue;
 			}
