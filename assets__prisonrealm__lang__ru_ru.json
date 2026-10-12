@@ -18,7 +18,7 @@
   "prisonrealm.arrested_by": "%s арестован стражником %s!",
   "prisonrealm.cannot_seal": "Запечатать нельзя: кто-то из вас уже в тюрьме.",
   "prisonrealm.sealing": "Куб тянется к %s...",
-  "prisonrealm.being_sealed": "Из куба тянутся щупальца...",
+  "prisonrealm.being_sealed": "Куб схватил вас!",
   "prisonrealm.imprisoned": "Вы в тюрьме. Срок: %s. Ищите выход.",
   "prisonrealm.escaped": "%s сбежал из тюрьмы!",
   "prisonrealm.released": "Срок вышел. Вы свободны.",
@@ -29,5 +29,12 @@
   "prisonrealm.cmd.released": "%s освобождён.",
   "prisonrealm.cmd.free": "Вы на свободе.",
   "prisonrealm.cmd.empty": "В тюрьме никого нет.",
-  "prisonrealm.sealed": "%s запечатан в кубе!"
+  "prisonrealm.sealed": "%s запечатан в кубе!",
+  "prisonrealm.say_close": "Скажите «close» в чат, чтобы запечатать",
+  "prisonrealm.seal_timeout": "Печать не была закрыта и рассеялась.",
+  "prisonrealm.no_target": "Посмотрите на игрока, которого хотите запечатать.",
+  "prisonrealm.cube_cooldown": "Куб ещё не готов.",
+  "prisonrealm.cube_hint": "Скажите «open», чтобы выпустить %s",
+  "prisonrealm.opened_by": "%s открыл куб и выпустил %s!",
+  "prisonrealm.someone": "пленника"
 }

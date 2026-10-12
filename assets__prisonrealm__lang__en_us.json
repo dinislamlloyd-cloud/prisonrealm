@@ -18,7 +18,7 @@
   "prisonrealm.arrested_by": "%s was arrested by %s!",
   "prisonrealm.cannot_seal": "Cannot seal: one of you is already imprisoned.",
   "prisonrealm.sealing": "The cube is reaching for %s...",
-  "prisonrealm.being_sealed": "Tendrils are reaching out of the cube...",
+  "prisonrealm.being_sealed": "The cube has seized you!",
   "prisonrealm.imprisoned": "You are imprisoned. Sentence: %s. Find a way out.",
   "prisonrealm.escaped": "%s escaped from prison!",
   "prisonrealm.released": "Your sentence is over. You are free.",
@@ -29,5 +29,12 @@
   "prisonrealm.cmd.released": "%s was released.",
   "prisonrealm.cmd.free": "You are free.",
   "prisonrealm.cmd.empty": "The prison is empty.",
-  "prisonrealm.sealed": "%s was sealed inside the cube!"
+  "prisonrealm.sealed": "%s was sealed inside the cube!",
+  "prisonrealm.say_close": "Say \"close\" in chat to seal",
+  "prisonrealm.seal_timeout": "The seal was not closed and faded away.",
+  "prisonrealm.no_target": "Look at the player you want to seal.",
+  "prisonrealm.cube_cooldown": "The cube is not ready yet.",
+  "prisonrealm.cube_hint": "Say \"open\" to release %s",
+  "prisonrealm.opened_by": "%s opened the cube and released %s!",
+  "prisonrealm.someone": "the prisoner"
 }

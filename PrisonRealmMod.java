@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.itemgroup.v1.FabricItemGroup;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
@@ -51,6 +52,10 @@ public class PrisonRealmMod implements ModInitializer {
 		PrisonCommands.register();
 
 		ServerTickEvents.END_SERVER_TICK.register(PrisonManager::tick);
+
+		// Слова «close» и «open» в чате управляют кубом.
+		ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) ->
+				PrisonManager.onChat(sender, message.getContent().getString()));
 
 		// Заключённые не могут драться.
 		AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) ->
