@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "prisonrealm",
+  "version": "${version}",
+  "name": "Prison Kingdom",
+  "description": "Тюремное царство: куб-печать, тюремное измерение, наручники, дубинка стражника, ключи и побеги.",
+  "authors": ["Claude"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.prisonrealm.PrisonRealmMod"],
+    "client": ["com.prisonrealm.client.PrisonRealmClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "fabric-api": "*"
+  }
+}

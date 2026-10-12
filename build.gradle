@@ -1,0 +1,83 @@
+plugins {
+	id 'fabric-loom' version '1.5-SNAPSHOT'
+	id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+	archivesName = project.archives_base_name
+}
+
+repositories {
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+processResources {
+	inputs.property "version", project.version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": project.version
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Поддержка «плоской» раскладки: если все файлы лежат в одной папке, то
+//  - *.java берутся как есть (javac не требует, чтобы путь совпадал с пакетом);
+//  - файлы с "__" в имени раскладываются по папкам: a__b__c.json -> a/b/c.json.
+// Обычная раскладка src/main/... продолжает работать.
+// ---------------------------------------------------------------------------
+def stagedJava = layout.buildDirectory.dir("staged/java").get().asFile
+def stagedRes = layout.buildDirectory.dir("staged/resources").get().asFile
+
+tasks.register('stageFlatFiles') {
+	doLast {
+		stagedJava.deleteDir()
+		stagedRes.deleteDir()
+		stagedJava.mkdirs()
+		stagedRes.mkdirs()
+		projectDir.listFiles().each { f ->
+			if (!f.isFile()) {
+				return
+			}
+			def n = f.name
+			if (n.endsWith('.java')) {
+				new File(stagedJava, n).bytes = f.bytes
+			} else if (n == 'fabric.mod.json') {
+				new File(stagedRes, n).bytes = f.bytes
+			} else if (n.contains('__')) {
+				def target = new File(stagedRes, n.replace('__', '/'))
+				target.parentFile.mkdirs()
+				target.bytes = f.bytes
+			}
+		}
+	}
+}
+
+sourceSets {
+	main {
+		java.srcDir stagedJava
+		resources.srcDir stagedRes
+	}
+}
+
+tasks.named('compileJava') { dependsOn 'stageFlatFiles' }
+tasks.named('processResources') { dependsOn 'stageFlatFiles' }
+tasks.named('sourcesJar') { dependsOn 'stageFlatFiles' }
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 17
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_17
+	targetCompatibility = JavaVersion.VERSION_17
+}
