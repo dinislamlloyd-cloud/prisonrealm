@@ -6,14 +6,16 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
+import net.minecraft.util.TypedActionResult;
+import net.minecraft.world.World;
 
 /**
- * Запечатывающий куб. ПКМ по игроку: куб хватает цель руками, вокруг неё зависают
- * красные кубы. Скажите «close» в чат, и кубы смыкаются на цели. Можно и сразу:
- * держите куб в руке, смотрите на игрока и скажите «close».
+ * Запечатывающий куб.
+ *  - ПКМ по игроку или мобу (или ПКМ в воздух, глядя на цель): куб хватает цель,
+ *    вокруг неё зависают красные кубы со щупальцами.
+ *  - Ещё раз ПКМ (или «close» в чат): кубы смыкаются на цели.
  */
 public class SealingCubeItem extends Item {
 	public static final int COOLDOWN_TICKS = 20 * 20;
@@ -23,20 +25,23 @@ public class SealingCubeItem extends Item {
 	}
 
 	@Override
+	public TypedActionResult<ItemStack> use(World world, PlayerEntity user, Hand hand) {
+		ItemStack stack = user.getStackInHand(hand);
+		if (world.isClient) {
+			return TypedActionResult.success(stack, true);
+		}
+		if (user instanceof ServerPlayerEntity owner && PrisonManager.useCube(owner)) {
+			return TypedActionResult.success(stack, false);
+		}
+		return TypedActionResult.fail(stack);
+	}
+
+	@Override
 	public ActionResult useOnEntity(ItemStack stack, PlayerEntity user, LivingEntity entity, Hand hand) {
 		if (user.getWorld().isClient) {
 			return ActionResult.SUCCESS;
 		}
-		if (!(entity instanceof ServerPlayerEntity target) || !(user instanceof ServerPlayerEntity owner)) {
-			return ActionResult.PASS;
-		}
-		if (PrisonManager.isPrisoner(owner) || PrisonManager.isPrisoner(target)) {
-			owner.sendMessage(Text.translatable("prisonrealm.cannot_seal"), true);
-			return ActionResult.FAIL;
-		}
-		if (PrisonManager.beginSeal(target, owner)) {
-			// Подсказку «скажите close» показывает сам beginSeal.
-			owner.getItemCooldownManager().set(this, COOLDOWN_TICKS);
+		if (user instanceof ServerPlayerEntity owner && PrisonManager.useCubeOn(owner, entity)) {
 			return ActionResult.SUCCESS;
 		}
 		return ActionResult.FAIL;

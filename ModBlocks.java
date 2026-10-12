@@ -30,7 +30,24 @@ public final class ModBlocks {
 	public static final Block PRISON_GATE = register("prison_gate",
 			new PrisonGateBlock(FabricBlockSettings.copyOf(Blocks.BEDROCK)));
 
+	// Блоки только для анимации куба: без предметов, в мире не ставятся.
+	/** Красная плоть с глазом: кубы в воздухе и грани запечатывающего куба. */
+	public static final Block SEAL_FLESH = registerHidden("seal_flesh",
+			new Block(FabricBlockSettings.copyOf(Blocks.NETHER_WART_BLOCK)));
+
+	/** Тёмно-красные щупальца. */
+	public static final Block SEAL_TENDON = registerHidden("seal_tendon",
+			new Block(FabricBlockSettings.copyOf(Blocks.NETHER_WART_BLOCK)));
+
+	/** Голубой куб, в котором сидит запечатанный. */
+	public static final Block SEALED_CUBE = registerHidden("sealed_cube",
+			new Block(FabricBlockSettings.copyOf(Blocks.LIGHT_BLUE_CONCRETE)));
+
 	private ModBlocks() {
+	}
+
+	private static Block registerHidden(String name, Block block) {
+		return Registry.register(Registries.BLOCK, new Identifier(PrisonRealmMod.MOD_ID, name), block);
 	}
 
 	private static Block register(String name, Block block) {

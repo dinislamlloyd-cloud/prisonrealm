@@ -9,11 +9,16 @@ import net.minecraft.util.Identifier;
 import net.minecraft.world.PersistentState;
 import net.minecraft.world.PersistentStateManager;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Сохраняемый список заключённых: оставшееся время, где игрок был раньше и его вещи. */
+/**
+ * Сохраняемые данные: заключённые игроки (срок, где были, вещи)
+ * и мобы, запечатанные в голубых кубах.
+ */
 public class PrisonState extends PersistentState {
 	public static class Entry {
 		public int ticksLeft;
@@ -25,11 +30,26 @@ public class PrisonState extends PersistentState {
 		public float pitch;
 		public int gameMode;
 		public NbtList inventory = new NbtList();
-		/** Куб-печать, висящий на месте ареста (может быть null). */
+		/** Голубой куб на месте запечатывания (может быть null). */
 		public UUID cubeId;
 	}
 
+	/** Моб внутри голубого куба. */
+	public static class SealedMob {
+		public UUID cubeId;
+		public Identifier dimension = new Identifier("minecraft", "overworld");
+		/** Где моб стоял (сюда же он вернётся). */
+		public double x;
+		public double y;
+		public double z;
+		/** Высота центра куба. */
+		public double centerY;
+		public String name = "";
+		public NbtCompound entity = new NbtCompound();
+	}
+
 	private final Map<UUID, Entry> prisoners = new HashMap<>();
+	private final List<SealedMob> mobs = new ArrayList<>();
 
 	public static PrisonState get(MinecraftServer server) {
 		PersistentStateManager manager = server.getOverworld().getPersistentStateManager();
@@ -61,8 +81,24 @@ public class PrisonState extends PersistentState {
 		return prisoners;
 	}
 
+	/** Нет заключённых игроков (мобы в кубах не считаются). */
 	public boolean isEmpty() {
 		return prisoners.isEmpty();
+	}
+
+	public List<SealedMob> mobs() {
+		return mobs;
+	}
+
+	public void addMob(SealedMob mob) {
+		mobs.add(mob);
+		markDirty();
+	}
+
+	public void removeMob(SealedMob mob) {
+		if (mobs.remove(mob)) {
+			markDirty();
+		}
 	}
 
 	@Override
@@ -87,6 +123,23 @@ public class PrisonState extends PersistentState {
 			list.add(c);
 		}
 		nbt.put("Prisoners", list);
+
+		NbtList mobList = new NbtList();
+		for (SealedMob m : mobs) {
+			NbtCompound c = new NbtCompound();
+			if (m.cubeId != null) {
+				c.putUuid("Cube", m.cubeId);
+			}
+			c.putString("Dim", m.dimension.toString());
+			c.putDouble("X", m.x);
+			c.putDouble("Y", m.y);
+			c.putDouble("Z", m.z);
+			c.putDouble("CenterY", m.centerY);
+			c.putString("Name", m.name);
+			c.put("Entity", m.entity);
+			mobList.add(c);
+		}
+		nbt.put("Mobs", mobList);
 		return nbt;
 	}
 
@@ -109,6 +162,23 @@ public class PrisonState extends PersistentState {
 				e.cubeId = c.getUuid("Cube");
 			}
 			state.prisoners.put(c.getUuid("Id"), e);
+		}
+
+		NbtList mobList = nbt.getList("Mobs", NbtElement.COMPOUND_TYPE);
+		for (int i = 0; i < mobList.size(); i++) {
+			NbtCompound c = mobList.getCompound(i);
+			SealedMob m = new SealedMob();
+			if (c.containsUuid("Cube")) {
+				m.cubeId = c.getUuid("Cube");
+			}
+			m.dimension = new Identifier(c.getString("Dim"));
+			m.x = c.getDouble("X");
+			m.y = c.getDouble("Y");
+			m.z = c.getDouble("Z");
+			m.centerY = c.getDouble("CenterY");
+			m.name = c.getString("Name");
+			m.entity = c.getCompound("Entity");
+			state.mobs.add(m);
 		}
 		return state;
 	}
