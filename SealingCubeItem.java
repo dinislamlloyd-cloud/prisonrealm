@@ -11,8 +11,9 @@ import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 
 /**
- * Запечатывающий куб. Использование на игроке: цель обездвиживается на 3 секунды,
- * затем куб поглощает её и отправляет в тюремное измерение на 10 минут.
+ * Запечатывающий куб. Использование на игроке: перед целью появляется куб, из него
+ * тянутся щупальца и 4 секунды удерживают её, затем куб поглощает цель и отправляет
+ * в тюремное измерение на 10 минут. Куб висит на месте ареста, пока длится срок.
  */
 public class SealingCubeItem extends Item {
 	public static final int COOLDOWN_TICKS = 20 * 20;
@@ -33,7 +34,7 @@ public class SealingCubeItem extends Item {
 			owner.sendMessage(Text.translatable("prisonrealm.cannot_seal"), true);
 			return ActionResult.FAIL;
 		}
-		if (PrisonManager.beginSeal(target)) {
+		if (PrisonManager.beginSeal(target, owner)) {
 			owner.getItemCooldownManager().set(this, COOLDOWN_TICKS);
 			owner.sendMessage(Text.translatable("prisonrealm.sealing", target.getDisplayName()), true);
 			return ActionResult.SUCCESS;

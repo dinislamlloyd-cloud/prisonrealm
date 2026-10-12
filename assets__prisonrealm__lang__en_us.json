@@ -17,8 +17,8 @@
   "prisonrealm.target_resists": "The target resists! Weaken them with a baton first.",
   "prisonrealm.arrested_by": "%s was arrested by %s!",
   "prisonrealm.cannot_seal": "Cannot seal: one of you is already imprisoned.",
-  "prisonrealm.sealing": "The cube is sealing %s...",
-  "prisonrealm.being_sealed": "The cube is devouring you!",
+  "prisonrealm.sealing": "The cube is reaching for %s...",
+  "prisonrealm.being_sealed": "Tendrils are reaching out of the cube...",
   "prisonrealm.imprisoned": "You are imprisoned. Sentence: %s. Find a way out.",
   "prisonrealm.escaped": "%s escaped from prison!",
   "prisonrealm.released": "Your sentence is over. You are free.",
@@ -28,5 +28,6 @@
   "prisonrealm.cmd.not_prisoner": "%s is not in prison.",
   "prisonrealm.cmd.released": "%s was released.",
   "prisonrealm.cmd.free": "You are free.",
-  "prisonrealm.cmd.empty": "The prison is empty."
+  "prisonrealm.cmd.empty": "The prison is empty.",
+  "prisonrealm.sealed": "%s was sealed inside the cube!"
 }

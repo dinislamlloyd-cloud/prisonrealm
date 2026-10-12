@@ -25,6 +25,8 @@ public class PrisonState extends PersistentState {
 		public float pitch;
 		public int gameMode;
 		public NbtList inventory = new NbtList();
+		/** Куб-печать, висящий на месте ареста (может быть null). */
+		public UUID cubeId;
 	}
 
 	private final Map<UUID, Entry> prisoners = new HashMap<>();
@@ -79,6 +81,9 @@ public class PrisonState extends PersistentState {
 			c.putFloat("Pitch", e.pitch);
 			c.putInt("Mode", e.gameMode);
 			c.put("Inventory", e.inventory);
+			if (e.cubeId != null) {
+				c.putUuid("Cube", e.cubeId);
+			}
 			list.add(c);
 		}
 		nbt.put("Prisoners", list);
@@ -100,6 +105,9 @@ public class PrisonState extends PersistentState {
 			e.pitch = c.getFloat("Pitch");
 			e.gameMode = c.getInt("Mode");
 			e.inventory = c.getList("Inventory", NbtElement.COMPOUND_TYPE);
+			if (c.containsUuid("Cube")) {
+				e.cubeId = c.getUuid("Cube");
+			}
 			state.prisoners.put(c.getUuid("Id"), e);
 		}
 		return state;
