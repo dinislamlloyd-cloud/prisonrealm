@@ -70,7 +70,7 @@ sourceSets {
 
 tasks.named('compileJava') { dependsOn 'stageFlatFiles' }
 tasks.named('processResources') { dependsOn 'stageFlatFiles' }
-tasks.named('sourcesJar') { dependsOn 'stageFlatFiles' }
+   tasks.matching { it.name == 'sourcesJar' }.configureEach { dependsOn 'stageFlatFiles' }
 
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 17
